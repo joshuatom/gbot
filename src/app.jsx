@@ -2,8 +2,13 @@ import { useState, useRef, useEffect } from "react"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { motion, AnimatePresence } from "framer-motion"
- 
+import { auth, db } from "./firebase"
+import { onAuthStateChanged, signOut } from "firebase/auth"
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "firebase/firestore"
+import Login from "./Login"
+
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY
+
 const SYSTEM_PROMPT = `You are PyBot, a coding assistant.
 When asked to write code:
 - Always use Python unless another language is specified
@@ -12,136 +17,79 @@ When asked to write code:
 - Format code in a code block
 - Give a one line explanation before the code
 For general conversation just reply naturally and friendly.`
- 
+
 function parseMessage(text) {
   const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g
   const parts = []
   let lastIndex = 0
   let match
   while ((match = codeBlockRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) parts.push({ type: "text", content: text.slice(lastIndex, match.index) })
+    if (match.index > lastIndex)
+      parts.push({ type: "text", content: text.slice(lastIndex, match.index) })
     parts.push({ type: "code", language: match[1] || "python", content: match[2].trim() })
     lastIndex = match.index + match[0].length
   }
-  if (lastIndex < text.length) parts.push({ type: "text", content: text.slice(lastIndex) })
+  if (lastIndex < text.length)
+    parts.push({ type: "text", content: text.slice(lastIndex) })
   return parts.length > 0 ? parts : [{ type: "text", content: text }]
 }
- 
+
 function Message({ msg }) {
   const isBot = msg.sender === "bot"
   const parts = parseMessage(msg.text)
- 
+
   return (
     <motion.div
-      initial={{
-        opacity: 0,
-        y: 32,
-        rotateX: isBot ? 25 : -25,
-        rotateY: isBot ? -12 : 12,
-        scale: 0.88,
-        z: -80
-      }}
-      animate={{
-        opacity: 1,
-        y: 0,
-        rotateX: 0,
-        rotateY: 0,
-        scale: 1,
-        z: 0
-      }}
-      transition={{
-        type: "spring",
-        stiffness: 220,
-        damping: 24,
-        mass: 0.8
-      }}
+      initial={{ opacity: 0, y: 24, rotateX: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 260, damping: 22 }}
       style={{
         display: "flex",
         justifyContent: isBot ? "flex-start" : "flex-end",
-        marginBottom: 16,
-        perspective: "1200px",
-        transformStyle: "preserve-3d"
+        marginBottom: 12,
+        perspective: "800px"
       }}
     >
       {isBot && (
         <motion.div
-          initial={{ scale: 0, rotateY: -180, rotateZ: -90 }}
-          animate={{ scale: 1, rotateY: 0, rotateZ: 0 }}
-          transition={{ type: "spring", stiffness: 320, damping: 22, delay: 0.05 }}
-          whileHover={{
-            scale: 1.15,
-            rotateY: 15,
-            rotateX: -10,
-            boxShadow: "0 8px 30px rgba(178,10,44,0.5)"
-          }}
+          initial={{ scale: 0, rotate: -180 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
           style={{
-            width: 36, height: 36, borderRadius: "50%",
-            background: "linear-gradient(135deg, #b20a2c, #7a0620)",
-            color: "#fffbd5",
-            display: "flex", alignItems: "center",
-            justifyContent: "center", fontSize: 15,
-            fontWeight: 800, marginRight: 10, flexShrink: 0,
-            boxShadow: "0 4px 20px rgba(178,10,44,0.45), inset 0 1px 0 rgba(255,251,213,0.2)",
-            fontFamily: "'Georgia', serif",
-            border: "1.5px solid rgba(255,251,213,0.3)",
-            transformStyle: "preserve-3d",
-            cursor: "default"
+            width: 32, height: 32, borderRadius: "50%",
+            background: "linear-gradient(135deg, #fc466b, #3f5efb)",
+            color: "#fff", display: "flex", alignItems: "center",
+            justifyContent: "center", fontSize: 14, fontWeight: 600,
+            marginRight: 8, flexShrink: 0,
+            boxShadow: "0 4px 15px rgba(63,94,251,0.4)"
           }}
-        >P</motion.div>
+        >B</motion.div>
       )}
- 
-      <div style={{ maxWidth: "76%", transformStyle: "preserve-3d" }}>
+      <div style={{ maxWidth: "75%" }}>
         {parts.map((part, i) =>
           part.type === "code" ? (
             <motion.div
               key={i}
-              initial={{ opacity: 0, rotateX: 30, y: 20, scale: 0.93 }}
-              animate={{ opacity: 1, rotateX: 0, y: 0, scale: 1 }}
-              transition={{ delay: i * 0.07, type: "spring", stiffness: 200, damping: 22 }}
-              whileHover={{
-                rotateX: -3,
-                rotateY: isBot ? 2 : -2,
-                scale: 1.01,
-                boxShadow: "0 16px 40px rgba(178,10,44,0.3)"
-              }}
-              style={{
-                borderRadius: 10,
-                overflow: "hidden",
-                marginTop: 10,
-                border: "1.5px solid rgba(178,10,44,0.4)",
-                boxShadow: "0 6px 24px rgba(178,10,44,0.18), 0 2px 8px rgba(0,0,0,0.4)",
-                transformStyle: "preserve-3d"
-              }}
+              initial={{ opacity: 0, x: isBot ? -20 : 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.05 }}
+              style={{ borderRadius: 8, overflow: "hidden", marginTop: 8 }}
             >
               <div style={{
-                background: "linear-gradient(90deg, #1a0a0e, #2d1015)",
-                color: "#fffbd5",
-                padding: "7px 14px",
-                fontSize: 11,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                borderBottom: "1px solid rgba(178,10,44,0.35)",
-                fontFamily: "'Courier New', monospace",
-                letterSpacing: "0.08em"
+                background: "#1e1e1e", color: "#fff",
+                padding: "6px 12px", fontSize: 11,
+                display: "flex", justifyContent: "space-between"
               }}>
-                <span style={{ color: "#e8a0ac", fontWeight: 600 }}>{part.language}</span>
-                <motion.span
-                  whileHover={{ scale: 1.1, color: "#b20a2c" }}
-                  whileTap={{ scale: 0.92 }}
-                  style={{ cursor: "pointer", color: "rgba(255,251,213,0.5)", transition: "color 0.2s", fontWeight: 600 }}
+                <span>{part.language}</span>
+                <span
+                  style={{ cursor: "pointer", color: "#94a3b8" }}
                   onClick={() => navigator.clipboard.writeText(part.content)}
-                >Copy</motion.span>
+                >Copy</span>
               </div>
               <SyntaxHighlighter
                 language={part.language}
                 style={vscDarkPlus}
-                customStyle={{
-                  margin: 0,
-                  borderRadius: "0 0 8px 8px",
-                  background: "#120508",
-                  fontSize: 13
-                }}
+                customStyle={{ margin: 0, borderRadius: "0 0 8px 8px" }}
               >
                 {part.content}
               </SyntaxHighlighter>
@@ -149,47 +97,22 @@ function Message({ msg }) {
           ) : (
             <motion.div
               key={i}
-              initial={{
-                opacity: 0,
-                x: isBot ? -30 : 30,
-                rotateY: isBot ? -20 : 20,
-                rotateX: 10,
-                scale: 0.9
-              }}
-              animate={{ opacity: 1, x: 0, rotateY: 0, rotateX: 0, scale: 1 }}
-              transition={{
-                type: "spring",
-                stiffness: 210,
-                damping: 22,
-                delay: i * 0.06
-              }}
-              whileHover={{
-                rotateY: isBot ? 3 : -3,
-                rotateX: -2,
-                scale: 1.015,
-                boxShadow: isBot
-                  ? "0 12px 36px rgba(178,10,44,0.25)"
-                  : "0 12px 36px rgba(178,10,44,0.45)"
-              }}
+              initial={{ opacity: 0, x: isBot ? -20 : 20, rotateY: isBot ? -15 : 15 }}
+              animate={{ opacity: 1, x: 0, rotateY: 0 }}
+              transition={{ type: "spring", stiffness: 200, damping: 20, delay: i * 0.05 }}
               style={{
-                padding: "11px 16px",
-                borderRadius: isBot ? "4px 18px 18px 18px" : "18px 4px 18px 18px",
+                padding: "10px 14px",
+                borderRadius: isBot ? "4px 16px 16px 16px" : "16px 4px 16px 16px",
                 background: isBot
-                  ? "linear-gradient(145deg, rgba(255,251,213,0.06) 0%, rgba(255,251,213,0.02) 100%)"
-                  : "linear-gradient(145deg, #b20a2c, #7a0620)",
-                color: isBot ? "#fffbd5" : "#fffbd5",
-                fontSize: 14.5,
-                lineHeight: 1.55,
-                marginTop: i > 0 ? 5 : 0,
+                  ? "linear-gradient(135deg, #1e293b, #0f172a)"
+                  : "linear-gradient(135deg, #fc466b, #3f5efb)",
+                color: "#fff",
+                fontSize: 15, lineHeight: 1.5,
+                marginTop: i > 0 ? 4 : 0,
                 boxShadow: isBot
-                  ? "0 4px 20px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,251,213,0.08)"
-                  : "0 6px 28px rgba(178,10,44,0.5), inset 0 1px 0 rgba(255,251,213,0.15)",
-                border: isBot
-                  ? "1.5px solid rgba(255,251,213,0.1)"
-                  : "1.5px solid rgba(255,251,213,0.2)",
-                transformStyle: "preserve-3d",
-                fontFamily: "'Georgia', 'Times New Roman', serif",
-                letterSpacing: "0.01em"
+                  ? "0 4px 20px rgba(0,0,0,0.3)"
+                  : "0 4px 20px rgba(252,70,107,0.35)",
+                border: isBot ? "1px solid #334155" : "none"
               }}
             >
               {part.content}
@@ -200,225 +123,284 @@ function Message({ msg }) {
     </motion.div>
   )
 }
- 
+
 function TypingIndicator() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16, rotateX: 20, scale: 0.9 }}
-      animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 10, rotateX: -15, scale: 0.92 }}
-      transition={{ type: "spring", stiffness: 240, damping: 22 }}
-      style={{ display: "flex", alignItems: "center", marginBottom: 14 }}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 10 }}
+      style={{ display: "flex", alignItems: "center", marginBottom: 12 }}
     >
       <div style={{
-        width: 36, height: 36, borderRadius: "50%",
-        background: "linear-gradient(135deg, #b20a2c, #7a0620)",
-        color: "#fffbd5",
-        display: "flex", alignItems: "center",
-        justifyContent: "center", fontSize: 15,
-        fontWeight: 800, marginRight: 10, flexShrink: 0,
-        boxShadow: "0 4px 18px rgba(178,10,44,0.45)",
-        fontFamily: "'Georgia', serif",
-        border: "1.5px solid rgba(255,251,213,0.3)"
-      }}>P</div>
+        width: 32, height: 32, borderRadius: "50%",
+        background: "linear-gradient(135deg, #fc466b, #3f5efb)",
+        color: "#fff", display: "flex", alignItems: "center",
+        justifyContent: "center", fontSize: 14, fontWeight: 600,
+        marginRight: 8, flexShrink: 0,
+        boxShadow: "0 4px 15px rgba(63,94,251,0.4)"
+      }}>B</div>
       <div style={{
-        padding: "12px 18px",
-        borderRadius: "4px 18px 18px 18px",
-        background: "rgba(255,251,213,0.04)",
-        border: "1.5px solid rgba(255,251,213,0.1)",
-        display: "flex", gap: 5, alignItems: "center",
-        boxShadow: "0 4px 16px rgba(0,0,0,0.3)"
+        padding: "10px 16px",
+        borderRadius: "4px 16px 16px 16px",
+        background: "#1e293b",
+        border: "1px solid #334155",
+        display: "flex", gap: 4, alignItems: "center"
       }}>
         {[0, 1, 2].map(i => (
-          <motion.div
-            key={i}
-            animate={{ y: [0, -6, 0], scaleY: [1, 0.7, 1] }}
-            transition={{ repeat: Infinity, duration: 1.0, delay: i * 0.18, ease: "easeInOut" }}
-            style={{
-              width: 7, height: 7, borderRadius: "50%",
-              background: "linear-gradient(135deg, #b20a2c, #e84060)"
-            }}
-          />
+          <div key={i} style={{
+            width: 7, height: 7, borderRadius: "50%",
+            background: "linear-gradient(135deg, #fc466b, #3f5efb)",
+            animation: "bounce 1.2s infinite",
+            animationDelay: `${i * 0.2}s`
+          }} />
         ))}
       </div>
     </motion.div>
   )
 }
- 
+
+function LoadingScreen() {
+  return (
+    <div style={{
+      display: "flex", height: "100vh",
+      alignItems: "center", justifyContent: "center",
+      background: "#060b18"
+    }}>
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+        style={{
+          width: 40, height: 40, borderRadius: "50%",
+          border: "3px solid transparent",
+          borderTopColor: "#fc466b",
+          borderRightColor: "#3f5efb"
+        }}
+      />
+    </div>
+  )
+}
+
 export default function App() {
+  const [user, setUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
   const [messages, setMessages] = useState([
-    { id: 1, sender: "bot", text: "Hi! I'm PyBot, your coding assistant. How can I help you today?" }
+    { id: "welcome", sender: "bot", text: "Hi! I'm PyBot, your coding assistant. How can I help you today?" }
   ])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
   const chatHistory = useRef([])
- 
+
+  // Auth state listener
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u)
+      setAuthLoading(false)
+    })
+    return unsub
+  }, [])
+
+  // Load messages from Firestore when user logs in
+  useEffect(() => {
+    if (!user) return
+    const q = query(
+      collection(db, "users", user.uid, "messages"),
+      orderBy("createdAt", "asc")
+    )
+    const unsub = onSnapshot(q, (snap) => {
+      const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+      if (msgs.length > 0) {
+        setMessages(msgs)
+        chatHistory.current = msgs.map(m => ({
+          role: m.sender === "bot" ? "assistant" : "user",
+          content: m.text
+        }))
+      }
+    })
+    return unsub
+  }, [user])
+
+  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isLoading])
- 
+
+  const saveMessage = async (sender, text) => {
+    if (!user) return
+    await addDoc(collection(db, "users", user.uid, "messages"), {
+      sender,
+      text,
+      createdAt: serverTimestamp()
+    })
+  }
+
   const sendMessage = async () => {
     const text = input.trim()
     if (!text || isLoading) return
+
     const userMsg = { id: Date.now(), sender: "user", text }
     setMessages(prev => [...prev, userMsg])
+    await saveMessage("user", text)
     setInput("")
     setIsLoading(true)
     chatHistory.current.push({ role: "user", content: text })
+
     try {
       const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${GROQ_API_KEY}`
+        },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
           max_tokens: 1024,
-          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...chatHistory.current]
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...chatHistory.current
+          ]
         })
       })
       const data = await response.json()
       const reply = data.choices[0].message.content
       chatHistory.current.push({ role: "assistant", content: reply })
-      setMessages(prev => [...prev, { id: Date.now() + 1, sender: "bot", text: reply }])
+      const botMsg = { id: Date.now() + 1, sender: "bot", text: reply }
+      setMessages(prev => [...prev, botMsg])
+      await saveMessage("bot", reply)
     } catch {
-      setMessages(prev => [...prev, { id: Date.now() + 1, sender: "bot", text: "⚠️ Could not reach Groq API. Check your API key." }])
+      const errMsg = { id: Date.now() + 1, sender: "bot", text: "⚠️ Could not reach Groq API. Check your API key." }
+      setMessages(prev => [...prev, errMsg])
     } finally {
       setIsLoading(false)
       inputRef.current?.focus()
     }
   }
- 
+
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
+    }
   }
- 
+
   const clearChat = () => {
     chatHistory.current = []
-    setMessages([{ id: 1, sender: "bot", text: "Hi! I'm PyBot, your coding assistant. How can I help you today?" }])
+    setMessages([{
+      id: "welcome",
+      sender: "bot",
+      text: "Hi! I'm PyBot, your coding assistant. How can I help you today?"
+    }])
   }
- 
+
+  const handleSignOut = async () => {
+    await signOut(auth)
+    chatHistory.current = []
+    setMessages([{
+      id: "welcome",
+      sender: "bot",
+      text: "Hi! I'm PyBot, your coding assistant. How can I help you today?"
+    }])
+  }
+
+  if (authLoading) return <LoadingScreen />
+  if (!user) return <Login />
+
   return (
     <div style={{
-      display: "flex", flexDirection: "column", height: "100vh",
-      background: "#0f0305",
-      fontFamily: "'Georgia', 'Times New Roman', serif",
-      perspective: "1000px"
+      display: "flex", flexDirection: "column",
+      height: "100vh", background: "#060b18",
+      fontFamily: "'Inter', 'Segoe UI', sans-serif"
     }}>
- 
-      {/* Atmospheric background layers */}
-      <div style={{
-        position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0,
-        background: `
-          radial-gradient(ellipse 70% 50% at 20% 10%, rgba(178,10,44,0.12) 0%, transparent 60%),
-          radial-gradient(ellipse 60% 60% at 80% 90%, rgba(255,251,213,0.04) 0%, transparent 55%),
-          radial-gradient(ellipse 40% 40% at 50% 50%, rgba(178,10,44,0.04) 0%, transparent 70%)
-        `
-      }} />
- 
-      {/* Subtle grain texture overlay */}
-      <div style={{
-        position: "fixed", inset: 0, pointerEvents: "none", zIndex: 1,
-        opacity: 0.025,
-        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
-        backgroundSize: "180px"
-      }} />
- 
-      {/* Fine horizontal rule lines for editorial texture */}
-      <div style={{
-        position: "fixed", inset: 0, pointerEvents: "none", zIndex: 1,
-        backgroundImage: "repeating-linear-gradient(0deg, transparent, transparent 28px, rgba(255,251,213,0.012) 28px, rgba(255,251,213,0.012) 29px)"
-      }} />
- 
+
+      {/* Background blobs */}
+      <div style={{ position: "fixed", top: "-20%", left: "-10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(252,70,107,0.08) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "fixed", bottom: "-20%", right: "-10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(63,94,251,0.08) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
+
       {/* Header */}
       <motion.div
-        initial={{ y: -70, opacity: 0, rotateX: 30 }}
-        animate={{ y: 0, opacity: 1, rotateX: 0 }}
-        transition={{ type: "spring", stiffness: 180, damping: 22 }}
+        initial={{ y: -60, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 200, damping: 20 }}
         style={{
-          padding: "14px 28px",
-          background: "rgba(15,3,5,0.85)",
-          backdropFilter: "blur(16px)",
-          borderBottom: "1px solid rgba(178,10,44,0.25)",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          zIndex: 10, position: "relative",
-          boxShadow: "0 4px 30px rgba(0,0,0,0.4), 0 1px 0 rgba(178,10,44,0.15)"
+          padding: "16px 24px",
+          background: "rgba(15,23,42,0.8)",
+          backdropFilter: "blur(12px)",
+          borderBottom: "1px solid rgba(252,70,107,0.15)",
+          display: "flex", alignItems: "center",
+          justifyContent: "space-between",
+          zIndex: 10, position: "relative"
         }}
       >
-        {/* Logo / Brand */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Left: logo + name */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <motion.div
-            whileHover={{ scale: 1.12, rotateY: 20, rotateX: -10 }}
-            whileTap={{ scale: 0.93, rotateZ: -5 }}
-            transition={{ type: "spring", stiffness: 300, damping: 18 }}
+            whileHover={{ scale: 1.1, rotate: 5 }}
             style={{
-              width: 40, height: 40, borderRadius: "50%",
-              background: "linear-gradient(135deg, #b20a2c 0%, #7a0620 60%, #3d0010 100%)",
+              width: 36, height: 36, borderRadius: "50%",
+              background: "linear-gradient(135deg, #fc466b, #3f5efb)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 17, fontWeight: 800, color: "#fffbd5",
-              boxShadow: "0 0 0 1.5px rgba(255,251,213,0.2), 0 6px 24px rgba(178,10,44,0.6)",
-              transformStyle: "preserve-3d",
-              cursor: "default",
-              letterSpacing: "-0.02em"
+              fontSize: 16, fontWeight: 700, color: "#fff",
+              boxShadow: "0 4px 20px rgba(252,70,107,0.4)"
             }}
-          >P</motion.div>
+          >B</motion.div>
           <div>
-            <div style={{
-              color: "#fffbd5", fontWeight: 700, fontSize: 17,
-              letterSpacing: "0.12em", textTransform: "uppercase",
-              textShadow: "0 2px 12px rgba(178,10,44,0.5)",
-              fontFamily: "'Georgia', serif"
-            }}>PyBot</div>
-            <div style={{ fontSize: 10.5, display: "flex", alignItems: "center", gap: 5, marginTop: 1 }}>
+            <div style={{ color: "#f1f5f9", fontWeight: 600, fontSize: 15 }}>PyBot</div>
+            <div style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
               <motion.span
-                animate={{
-                  scale: [1, 1.4, 1],
-                  boxShadow: ["0 0 0px rgba(178,10,44,0)", "0 0 8px rgba(178,10,44,0.8)", "0 0 0px rgba(178,10,44,0)"]
-                }}
-                transition={{ repeat: Infinity, duration: 2.2 }}
-                style={{
-                  width: 6, height: 6, borderRadius: "50%",
-                  background: "#b20a2c", display: "inline-block",
-                  border: "1px solid rgba(255,251,213,0.4)"
-                }}
+                animate={{ scale: [1, 1.3, 1] }}
+                transition={{ repeat: Infinity, duration: 2 }}
+                style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }}
               />
-              <span style={{ color: "rgba(255,251,213,0.55)", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Courier New', monospace" }}>Active</span>
+              <span style={{ color: "#22c55e" }}>Online</span>
             </div>
           </div>
         </div>
- 
-        {/* Decorative center line */}
-        <div style={{
-          position: "absolute", left: "50%", transform: "translateX(-50%)",
-          display: "flex", alignItems: "center", gap: 10
-        }}>
-          <div style={{ width: 40, height: 1, background: "linear-gradient(90deg, transparent, rgba(178,10,44,0.5))" }} />
-          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(178,10,44,0.6)", border: "1px solid rgba(255,251,213,0.2)" }} />
-          <div style={{ width: 40, height: 1, background: "linear-gradient(90deg, rgba(178,10,44,0.5), transparent)" }} />
+
+        {/* Right: user info + buttons */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {user.photoURL && (
+            <img
+              src={user.photoURL}
+              alt="avatar"
+              style={{ width: 30, height: 30, borderRadius: "50%", border: "2px solid #fc466b" }}
+            />
+          )}
+          <span style={{ color: "#94a3b8", fontSize: 12 }}>
+            {user.displayName || user.email}
+          </span>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={clearChat}
+            style={{
+              background: "transparent",
+              border: "1px solid #334155",
+              borderRadius: 8, color: "#94a3b8",
+              padding: "6px 12px", fontSize: 12, cursor: "pointer"
+            }}
+          >Clear</motion.button>
+          <motion.button
+            whileHover={{ scale: 1.05, borderColor: "#fc466b" }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleSignOut}
+            style={{
+              background: "transparent",
+              border: "1px solid #fc466b",
+              borderRadius: 8, color: "#fc466b",
+              padding: "6px 12px", fontSize: 12, cursor: "pointer"
+            }}
+          >Sign out</motion.button>
         </div>
- 
-        <motion.button
-          whileHover={{ scale: 1.05, rotateX: -5, borderColor: "rgba(178,10,44,0.8)", color: "#fffbd5" }}
-          whileTap={{ scale: 0.93, rotateX: 5 }}
-          onClick={clearChat}
-          style={{
-            background: "transparent",
-            border: "1px solid rgba(255,251,213,0.15)",
-            borderRadius: 7, color: "rgba(255,251,213,0.45)",
-            padding: "6px 14px", fontSize: 11, cursor: "pointer",
-            transition: "all 0.2s",
-            fontFamily: "'Courier New', monospace",
-            letterSpacing: "0.1em", textTransform: "uppercase",
-            transformStyle: "preserve-3d"
-          }}
-        >Clear</motion.button>
       </motion.div>
- 
-      {/* Messages area */}
+
+      {/* Messages */}
       <div style={{
-        flex: 1, overflowY: "auto", padding: "28px 28px 12px",
+        flex: 1, overflowY: "auto",
+        padding: "24px 24px 8px",
         display: "flex", flexDirection: "column",
-        position: "relative", zIndex: 2
+        position: "relative", zIndex: 1
       }}>
         <AnimatePresence>
           {messages.map(msg => <Message key={msg.id} msg={msg} />)}
@@ -426,32 +408,26 @@ export default function App() {
         </AnimatePresence>
         <div ref={messagesEndRef} />
       </div>
- 
-      {/* Input area */}
+
+      {/* Input */}
       <motion.div
-        initial={{ y: 70, opacity: 0, rotateX: -20 }}
-        animate={{ y: 0, opacity: 1, rotateX: 0 }}
-        transition={{ type: "spring", stiffness: 180, damping: 22 }}
+        initial={{ y: 60, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 200, damping: 20 }}
         style={{
-          padding: "16px 28px 20px",
-          background: "rgba(15,3,5,0.9)",
-          backdropFilter: "blur(16px)",
-          borderTop: "1px solid rgba(178,10,44,0.2)",
-          position: "relative", zIndex: 10,
-          boxShadow: "0 -4px 30px rgba(0,0,0,0.4)"
+          padding: "16px 24px",
+          background: "rgba(15,23,42,0.8)",
+          backdropFilter: "blur(12px)",
+          borderTop: "1px solid rgba(63,94,251,0.15)",
+          position: "relative", zIndex: 10
         }}
       >
         <motion.div
-          whileFocusWithin={{
-            boxShadow: "0 0 0 1.5px rgba(178,10,44,0.6), 0 0 30px rgba(178,10,44,0.15)",
-            borderColor: "rgba(178,10,44,0.5)"
-          }}
+          whileFocusWithin={{ boxShadow: "0 0 0 2px rgba(252,70,107,0.3), 0 0 20px rgba(63,94,251,0.2)" }}
           style={{
-            display: "flex", gap: 12, alignItems: "flex-end",
-            background: "rgba(255,251,213,0.025)",
-            border: "1px solid rgba(255,251,213,0.1)",
-            borderRadius: 12, padding: "11px 14px",
-            transition: "box-shadow 0.3s, border-color 0.3s"
+            display: "flex", gap: 10, alignItems: "flex-end",
+            background: "#0f172a", border: "1px solid #334155",
+            borderRadius: 14, padding: "10px 14px"
           }}
         >
           <textarea
@@ -459,14 +435,13 @@ export default function App() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anything about code…"
+            placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
             rows={1}
             style={{
-              flex: 1, background: "transparent", border: "none", outline: "none",
-              color: "#fffbd5", fontSize: 14, resize: "none", lineHeight: 1.55,
-              maxHeight: 120, overflowY: "auto",
-              fontFamily: "'Georgia', serif",
-              letterSpacing: "0.01em"
+              flex: 1, background: "transparent", border: "none",
+              outline: "none", color: "#f1f5f9", fontSize: 14,
+              resize: "none", lineHeight: 1.5, maxHeight: 120,
+              overflowY: "auto", fontFamily: "inherit"
             }}
             onInput={e => {
               e.target.style.height = "auto"
@@ -474,61 +449,43 @@ export default function App() {
             }}
           />
           <motion.button
-            whileHover={input.trim() && !isLoading ? {
-              scale: 1.12,
-              rotateY: 15,
-              rotateX: -8,
-              boxShadow: "0 8px 30px rgba(178,10,44,0.7)"
-            } : {}}
-            whileTap={input.trim() && !isLoading ? {
-              scale: 0.88,
-              rotateZ: 12,
-              rotateX: 8
-            } : {}}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9, rotateZ: 15 }}
             onClick={sendMessage}
             disabled={!input.trim() || isLoading}
-            transition={{ type: "spring", stiffness: 300, damping: 18 }}
             style={{
-              width: 38, height: 38, borderRadius: "50%",
+              width: 36, height: 36, borderRadius: "50%",
               background: input.trim() && !isLoading
-                ? "linear-gradient(135deg, #b20a2c, #7a0620)"
-                : "rgba(255,251,213,0.06)",
-              border: input.trim() && !isLoading
-                ? "1.5px solid rgba(255,251,213,0.25)"
-                : "1px solid rgba(255,251,213,0.08)",
+                ? "linear-gradient(135deg, #fc466b, #3f5efb)"
+                : "#334155",
+              border: "none",
               cursor: input.trim() && !isLoading ? "pointer" : "not-allowed",
               display: "flex", alignItems: "center", justifyContent: "center",
               flexShrink: 0,
               boxShadow: input.trim() && !isLoading
-                ? "0 4px 18px rgba(178,10,44,0.55), inset 0 1px 0 rgba(255,251,213,0.15)"
-                : "none",
-              transformStyle: "preserve-3d"
+                ? "0 4px 15px rgba(252,70,107,0.4)"
+                : "none"
             }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-              <path d="M22 2L11 13" stroke={input.trim() && !isLoading ? "#fffbd5" : "rgba(255,251,213,0.25)"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke={input.trim() && !isLoading ? "#fffbd5" : "rgba(255,251,213,0.25)"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M22 2L11 13" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </motion.button>
         </motion.div>
- 
-        <div style={{
-          textAlign: "center", color: "rgba(255,251,213,0.2)",
-          fontSize: 10.5, marginTop: 9,
-          fontFamily: "'Courier New', monospace",
-          letterSpacing: "0.1em", textTransform: "uppercase"
-        }}>
+        <div style={{ textAlign: "center", color: "#475569", fontSize: 11, marginTop: 8 }}>
           Enter to send · Shift+Enter for new line
         </div>
       </motion.div>
- 
+
       <style>{`
-        * { box-sizing: border-box; }
-        ::placeholder { color: rgba(255,251,213,0.22) !important; font-family: 'Georgia', serif; font-style: italic; }
-        ::-webkit-scrollbar { width: 3px; }
+        @keyframes bounce {
+          0%, 60%, 100% { transform: translateY(0); }
+          30% { transform: translateY(-6px); }
+        }
+        ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(178,10,44,0.5); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #b20a2c; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
       `}</style>
     </div>
   )
