@@ -34,37 +34,101 @@ export default function Login() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", background: "#060b18", fontFamily: "'Inter', sans-serif" }}>
+    <div style={{
+      display: "flex",
+      height: "100vh",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "#fffbd5",
+      fontFamily: "'Georgia', 'Times New Roman', serif",
+      position: "relative",
+      overflow: "hidden"
+    }}>
 
-      {/* Background blobs */}
-      <div style={{ position: "fixed", top: "-20%", left: "-10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(252,70,107,0.08) 0%, transparent 70%)", pointerEvents: "none" }} />
-      <div style={{ position: "fixed", bottom: "-20%", right: "-10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(63,94,251,0.08) 0%, transparent 70%)", pointerEvents: "none" }} />
+      {/* Decorative background shapes */}
+      <div style={{
+        position: "fixed", top: -80, right: -80,
+        width: 320, height: 320, borderRadius: "50%",
+        background: "rgba(178,10,44,0.08)",
+        pointerEvents: "none"
+      }} />
+      <div style={{
+        position: "fixed", bottom: -60, left: -60,
+        width: 260, height: 260, borderRadius: "50%",
+        background: "rgba(178,10,44,0.06)",
+        pointerEvents: "none"
+      }} />
+      <div style={{
+        position: "fixed", top: "40%", left: "8%",
+        width: 4, height: 120,
+        background: "rgba(178,10,44,0.15)",
+        pointerEvents: "none"
+      }} />
+      <div style={{
+        position: "fixed", bottom: "20%", right: "10%",
+        width: 4, height: 80,
+        background: "rgba(178,10,44,0.1)",
+        pointerEvents: "none"
+      }} />
 
       <motion.div
-        initial={{ opacity: 0, y: 40, rotateX: 15 }}
-        animate={{ opacity: 1, y: 0, rotateX: 0 }}
-        transition={{ type: "spring", stiffness: 200, damping: 20 }}
-        style={{ width: 380, background: "rgba(15,23,42,0.9)", backdropFilter: "blur(12px)", borderRadius: 20, border: "1px solid rgba(252,70,107,0.15)", padding: 32 }}
+        initial={{ opacity: 0, y: 32 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: "spring", stiffness: 180, damping: 22 }}
+        style={{
+          width: 400,
+          background: "#fff8cc",
+          borderRadius: 4,
+          border: "1.5px solid rgba(178,10,44,0.25)",
+          padding: "40px 36px",
+          boxShadow: "6px 6px 0px rgba(178,10,44,0.12)",
+          position: "relative"
+        }}
       >
+        {/* Top rule */}
+        <div style={{
+          position: "absolute", top: 0, left: 36, right: 36, height: 3,
+          background: "#b20a2c", borderRadius: "0 0 2px 2px"
+        }} />
+
         {/* Logo */}
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
           <motion.div
-            animate={{ rotate: [0, 5, -5, 0] }}
-            transition={{ repeat: Infinity, duration: 4 }}
-            style={{ width: 56, height: 56, borderRadius: "50%", background: "linear-gradient(135deg, #fc466b, #3f5efb)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 700, color: "#fff", margin: "0 auto 12px", boxShadow: "0 8px 32px rgba(252,70,107,0.4)" }}
+            animate={{ rotate: [0, 3, -3, 0] }}
+            transition={{ repeat: Infinity, duration: 5, ease: "easeInOut" }}
+            style={{
+              width: 52, height: 52, borderRadius: "50%",
+              background: "#b20a2c",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 22, fontWeight: 700, color: "#fffbd5",
+              margin: "0 auto 14px",
+              letterSpacing: "-0.5px"
+            }}
           >B</motion.div>
-          <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 700 }}>PyBot</div>
-          <div style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>
+          <div style={{ color: "#1a0a0d", fontSize: 24, fontWeight: 700, letterSpacing: "-0.5px" }}>
+            PyBot
+          </div>
+          <div style={{ color: "#8a5060", fontSize: 13, marginTop: 5, fontFamily: "'Georgia', serif", fontStyle: "italic" }}>
             {isSignUp ? "Create your account" : "Welcome back"}
           </div>
         </div>
 
         {/* Google button */}
         <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+          whileHover={{ scale: 1.015 }}
+          whileTap={{ scale: 0.985 }}
           onClick={handleGoogle}
-          style={{ width: "100%", padding: "11px 0", borderRadius: 10, background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontSize: 14, fontWeight: 500, color: "#1e293b", marginBottom: 20 }}
+          style={{
+            width: "100%", padding: "11px 0", borderRadius: 4,
+            background: "#fffbd5",
+            border: "1.5px solid rgba(178,10,44,0.3)",
+            cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            fontSize: 14, fontWeight: 500, color: "#1a0a0d",
+            marginBottom: 20,
+            fontFamily: "'Georgia', serif",
+            transition: "border-color 0.2s, background 0.2s"
+          }}
         >
           <svg width="18" height="18" viewBox="0 0 48 48">
             <path fill="#FFC107" d="M43.6 20H24v8h11.3C33.7 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 20-9 20-20 0-1.3-.1-2.7-.4-4z"/>
@@ -75,19 +139,30 @@ export default function Login() {
           Continue with Google
         </motion.button>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-          <div style={{ flex: 1, height: 1, background: "#1e293b" }} />
-          <span style={{ color: "#475569", fontSize: 12 }}>or</span>
-          <div style={{ flex: 1, height: 1, background: "#1e293b" }} />
+        {/* Divider */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <div style={{ flex: 1, height: 1, background: "rgba(178,10,44,0.2)" }} />
+          <span style={{ color: "#b20a2c", fontSize: 11, letterSpacing: "0.1em", fontFamily: "'Georgia', serif" }}>or</span>
+          <div style={{ flex: 1, height: 1, background: "rgba(178,10,44,0.2)" }} />
         </div>
 
-        {/* Email & Password */}
+        {/* Inputs */}
         <input
           type="email"
           placeholder="Email"
           value={email}
           onChange={e => setEmail(e.target.value)}
-          style={{ width: "100%", padding: "11px 14px", borderRadius: 10, background: "#0f172a", border: "1px solid #334155", color: "#f1f5f9", fontSize: 14, outline: "none", marginBottom: 10, boxSizing: "border-box" }}
+          style={{
+            width: "100%", padding: "11px 14px", borderRadius: 4,
+            background: "#fffbd5",
+            border: "1.5px solid rgba(178,10,44,0.25)",
+            color: "#1a0a0d", fontSize: 14,
+            outline: "none", marginBottom: 10, boxSizing: "border-box",
+            fontFamily: "'Georgia', serif",
+            transition: "border-color 0.2s"
+          }}
+          onFocus={e => e.target.style.borderColor = "#b20a2c"}
+          onBlur={e => e.target.style.borderColor = "rgba(178,10,44,0.25)"}
         />
         <input
           type="password"
@@ -95,29 +170,49 @@ export default function Login() {
           value={password}
           onChange={e => setPassword(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleEmail()}
-          style={{ width: "100%", padding: "11px 14px", borderRadius: 10, background: "#0f172a", border: "1px solid #334155", color: "#f1f5f9", fontSize: 14, outline: "none", marginBottom: 16, boxSizing: "border-box" }}
+          style={{
+            width: "100%", padding: "11px 14px", borderRadius: 4,
+            background: "#fffbd5",
+            border: "1.5px solid rgba(178,10,44,0.25)",
+            color: "#1a0a0d", fontSize: 14,
+            outline: "none", marginBottom: 18, boxSizing: "border-box",
+            fontFamily: "'Georgia', serif",
+            transition: "border-color 0.2s"
+          }}
+          onFocus={e => e.target.style.borderColor = "#b20a2c"}
+          onBlur={e => e.target.style.borderColor = "rgba(178,10,44,0.25)"}
         />
 
         {error && (
-          <div style={{ color: "#fc466b", fontSize: 12, marginBottom: 12, textAlign: "center" }}>
+          <div style={{ color: "#b20a2c", fontSize: 12, marginBottom: 12, textAlign: "center", fontStyle: "italic" }}>
             {error}
           </div>
         )}
 
+        {/* Primary button */}
         <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+          whileHover={{ scale: 1.015 }}
+          whileTap={{ scale: 0.985 }}
           onClick={handleEmail}
-          style={{ width: "100%", padding: "11px 0", borderRadius: 10, background: "linear-gradient(135deg, #fc466b, #3f5efb)", border: "none", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", boxShadow: "0 4px 20px rgba(252,70,107,0.3)" }}
+          style={{
+            width: "100%", padding: "12px 0", borderRadius: 4,
+            background: "#b20a2c",
+            border: "none", color: "#fffbd5",
+            fontSize: 14, fontWeight: 600, cursor: "pointer",
+            fontFamily: "'Georgia', serif",
+            letterSpacing: "0.03em",
+            boxShadow: "3px 3px 0px rgba(178,10,44,0.3)"
+          }}
         >
           {isSignUp ? "Create Account" : "Sign In"}
         </motion.button>
 
-        <div style={{ textAlign: "center", marginTop: 16, color: "#64748b", fontSize: 13 }}>
+        {/* Toggle */}
+        <div style={{ textAlign: "center", marginTop: 18, color: "#8a5060", fontSize: 13, fontFamily: "'Georgia', serif" }}>
           {isSignUp ? "Already have an account?" : "Don't have an account?"}
           <span
             onClick={() => { setIsSignUp(!isSignUp); setError("") }}
-            style={{ color: "#fc466b", cursor: "pointer", marginLeft: 5 }}
+            style={{ color: "#b20a2c", cursor: "pointer", marginLeft: 5, fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 3 }}
           >
             {isSignUp ? "Sign in" : "Sign up"}
           </span>

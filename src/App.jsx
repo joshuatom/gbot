@@ -1,10 +1,14 @@
 import { useState, useRef, useEffect } from "react"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"
+import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { motion, AnimatePresence } from "framer-motion"
 import { auth, db } from "./firebase"
 import { onAuthStateChanged, signOut } from "firebase/auth"
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "firebase/firestore"
+import {
+  collection, addDoc, query, orderBy,
+  onSnapshot, serverTimestamp,
+  doc, setDoc, getDocs, deleteDoc
+} from "firebase/firestore"
 import Login from "./Login"
 
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY
@@ -18,104 +22,162 @@ When asked to write code:
 - Give a one line explanation before the code
 For general conversation just reply naturally and friendly.`
 
+/* ─────────────────────────────────────────────
+   Typewriter hook
+───────────────────────────────────────────── */
+function useTypewriter(text, speed = 13, enabled = true) {
+  const [displayed, setDisplayed] = useState(enabled ? "" : text)
+  const [done, setDone] = useState(!enabled)
+  useEffect(() => {
+    if (!enabled) { setDisplayed(text); setDone(true); return }
+    setDisplayed(""); setDone(false)
+    if (!text) return
+    let i = 0
+    const id = setInterval(() => {
+      i++; setDisplayed(text.slice(0, i))
+      if (i >= text.length) { clearInterval(id); setDone(true) }
+    }, speed)
+    return () => clearInterval(id)
+  }, [text, speed, enabled])
+  return { displayed, done }
+}
+
+/* ─────────────────────────────────────────────
+   Message parser
+───────────────────────────────────────────── */
 function parseMessage(text) {
-  const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g
-  const parts = []
-  let lastIndex = 0
-  let match
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    if (match.index > lastIndex)
-      parts.push({ type: "text", content: text.slice(lastIndex, match.index) })
-    parts.push({ type: "code", language: match[1] || "python", content: match[2].trim() })
-    lastIndex = match.index + match[0].length
+  const re = /```(\w+)?\n?([\s\S]*?)```/g
+  const parts = []; let last = 0, m
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push({ type: "text", content: text.slice(last, m.index) })
+    parts.push({ type: "code", language: m[1] || "python", content: m[2].trim() })
+    last = m.index + m[0].length
   }
-  if (lastIndex < text.length)
-    parts.push({ type: "text", content: text.slice(lastIndex) })
+  if (last < text.length) parts.push({ type: "text", content: text.slice(last) })
   return parts.length > 0 ? parts : [{ type: "text", content: text }]
 }
 
-function Message({ msg }) {
+/* ─────────────────────────────────────────────
+   TypewriterText
+───────────────────────────────────────────── */
+function TypewriterText({ content, animate }) {
+  const { displayed, done } = useTypewriter(content, 13, animate)
+  return (
+    <span>
+      {animate ? displayed : content}
+      {animate && !done && (
+        <span style={{
+          display: "inline-block", width: 2, height: "1em",
+          background: "#b20a2c", marginLeft: 2,
+          verticalAlign: "text-bottom",
+          animation: "blink 0.65s steps(1) infinite"
+        }} />
+      )}
+    </span>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Message bubble
+───────────────────────────────────────────── */
+function Message({ msg, isLatest }) {
   const isBot = msg.sender === "bot"
   const parts = parseMessage(msg.text)
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 24, rotateX: 20, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 260, damping: 22 }}
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 320, damping: 30 }}
       style={{
-        display: "flex",
-        justifyContent: isBot ? "flex-start" : "flex-end",
-        marginBottom: 12,
-        perspective: "800px"
+        display: "flex", gap: 10, alignItems: "flex-start",
+        marginBottom: 18,
+        flexDirection: isBot ? "row" : "row-reverse"
       }}
     >
-      {isBot && (
-        <motion.div
-          initial={{ scale: 0, rotate: -180 }}
-          animate={{ scale: 1, rotate: 0 }}
-          transition={{ type: "spring", stiffness: 300, damping: 20 }}
-          style={{
-            width: 32, height: 32, borderRadius: "50%",
-            background: "linear-gradient(135deg, #fc466b, #3f5efb)",
-            color: "#fff", display: "flex", alignItems: "center",
-            justifyContent: "center", fontSize: 14, fontWeight: 600,
-            marginRight: 8, flexShrink: 0,
-            boxShadow: "0 4px 15px rgba(63,94,251,0.4)"
-          }}
-        >B</motion.div>
-      )}
-      <div style={{ maxWidth: "75%" }}>
+      {/* Avatar */}
+      <div style={{
+        width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+        background: isBot
+          ? "linear-gradient(135deg,#b20a2c,#e8193c)"
+          : "#fffbd5",
+        color: isBot ? "#fffbd5" : "#b20a2c",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 13, fontWeight: 800, fontFamily: "Georgia,serif",
+        border: isBot
+          ? "2px solid rgba(178,10,44,0.2)"
+          : "2px solid #b20a2c",
+        boxShadow: isBot
+          ? "0 2px 10px rgba(178,10,44,0.25)"
+          : "0 2px 8px rgba(178,10,44,0.15)"
+      }}>
+        {isBot ? "P" : "U"}
+      </div>
+
+      {/* Content */}
+      <div style={{ maxWidth: "72%", display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{
+          fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em",
+          color: isBot ? "rgba(178,10,44,0.5)" : "rgba(26,5,8,0.38)",
+          fontFamily: "monospace", textTransform: "uppercase",
+          textAlign: isBot ? "left" : "right", marginBottom: 1
+        }}>
+          {isBot ? "PyBot" : "You"}
+        </div>
+
         {parts.map((part, i) =>
           part.type === "code" ? (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, x: isBot ? -20 : 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.05 }}
-              style={{ borderRadius: 8, overflow: "hidden", marginTop: 8 }}
-            >
+            <div key={i} style={{
+              borderRadius: 10, overflow: "hidden",
+              border: "1px solid rgba(178,10,44,0.18)",
+              boxShadow: "0 3px 14px rgba(178,10,44,0.08)"
+            }}>
               <div style={{
-                background: "#1e1e1e", color: "#fff",
-                padding: "6px 12px", fontSize: 11,
-                display: "flex", justifyContent: "space-between"
+                background: "#b20a2c", color: "#fffbd5",
+                padding: "6px 14px", fontSize: 10.5,
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                fontFamily: "monospace", letterSpacing: "0.1em", textTransform: "uppercase"
               }}>
-                <span>{part.language}</span>
-                <span
-                  style={{ cursor: "pointer", color: "#94a3b8" }}
+                <span style={{ fontWeight: 700 }}>{part.language}</span>
+                <motion.span
+                  whileHover={{ opacity: 1 }} whileTap={{ scale: 0.9 }}
+                  style={{ cursor: "pointer", opacity: 0.75, fontWeight: 600, fontSize: 10 }}
                   onClick={() => navigator.clipboard.writeText(part.content)}
-                >Copy</span>
+                >Copy</motion.span>
               </div>
               <SyntaxHighlighter
                 language={part.language}
-                style={vscDarkPlus}
-                customStyle={{ margin: 0, borderRadius: "0 0 8px 8px" }}
+                style={oneLight}
+                customStyle={{ margin: 0, background: "#fff8ee", fontSize: 12.5 }}
               >
                 {part.content}
               </SyntaxHighlighter>
-            </motion.div>
+            </div>
           ) : (
             <motion.div
               key={i}
-              initial={{ opacity: 0, x: isBot ? -20 : 20, rotateY: isBot ? -15 : 15 }}
-              animate={{ opacity: 1, x: 0, rotateY: 0 }}
-              transition={{ type: "spring", stiffness: 200, damping: 20, delay: i * 0.05 }}
+              initial={{ opacity: 0, x: isBot ? -12 : 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ type: "spring", stiffness: 280, damping: 26, delay: i * 0.04 }}
               style={{
                 padding: "10px 14px",
-                borderRadius: isBot ? "4px 16px 16px 16px" : "16px 4px 16px 16px",
+                borderRadius: isBot ? "4px 14px 14px 14px" : "14px 4px 14px 14px",
                 background: isBot
-                  ? "linear-gradient(135deg, #1e293b, #0f172a)"
-                  : "linear-gradient(135deg, #fc466b, #3f5efb)",
-                color: "#fff",
-                fontSize: 15, lineHeight: 1.5,
-                marginTop: i > 0 ? 4 : 0,
+                  ? "#ffffff"
+                  : "linear-gradient(135deg,#b20a2c,#d41232)",
+                color: isBot ? "#1a0508" : "#fffbd5",
+                fontSize: 14, lineHeight: 1.65,
+                fontFamily: "Georgia,serif",
                 boxShadow: isBot
-                  ? "0 4px 20px rgba(0,0,0,0.3)"
-                  : "0 4px 20px rgba(252,70,107,0.35)",
-                border: isBot ? "1px solid #334155" : "none"
+                  ? "0 2px 10px rgba(178,10,44,0.07)"
+                  : "0 3px 16px rgba(178,10,44,0.25)",
+                border: isBot ? "1px solid rgba(178,10,44,0.1)" : "none"
               }}
             >
-              {part.content}
+              <TypewriterText
+                content={part.content}
+                animate={isBot && isLatest && i === 0}
+              />
             </motion.div>
           )
         )}
@@ -124,128 +186,237 @@ function Message({ msg }) {
   )
 }
 
+/* ─────────────────────────────────────────────
+   Typing indicator
+───────────────────────────────────────────── */
 function TypingIndicator() {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      style={{ display: "flex", alignItems: "center", marginBottom: 12 }}
+      exit={{ opacity: 0 }}
+      style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 18 }}
     >
       <div style={{
-        width: 32, height: 32, borderRadius: "50%",
-        background: "linear-gradient(135deg, #fc466b, #3f5efb)",
-        color: "#fff", display: "flex", alignItems: "center",
-        justifyContent: "center", fontSize: 14, fontWeight: 600,
-        marginRight: 8, flexShrink: 0,
-        boxShadow: "0 4px 15px rgba(63,94,251,0.4)"
-      }}>B</div>
-      <div style={{
-        padding: "10px 16px",
-        borderRadius: "4px 16px 16px 16px",
-        background: "#1e293b",
-        border: "1px solid #334155",
-        display: "flex", gap: 4, alignItems: "center"
-      }}>
-        {[0, 1, 2].map(i => (
-          <div key={i} style={{
-            width: 7, height: 7, borderRadius: "50%",
-            background: "linear-gradient(135deg, #fc466b, #3f5efb)",
-            animation: "bounce 1.2s infinite",
-            animationDelay: `${i * 0.2}s`
-          }} />
-        ))}
+        width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+        background: "linear-gradient(135deg,#b20a2c,#e8193c)",
+        color: "#fffbd5", display: "flex", alignItems: "center",
+        justifyContent: "center", fontSize: 13, fontWeight: 800,
+        fontFamily: "Georgia,serif",
+        boxShadow: "0 2px 10px rgba(178,10,44,0.25)"
+      }}>P</div>
+      <div>
+        <div style={{
+          fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em",
+          color: "rgba(178,10,44,0.5)", fontFamily: "monospace",
+          textTransform: "uppercase", marginBottom: 3
+        }}>PyBot</div>
+        <div style={{
+          padding: "10px 16px", borderRadius: "4px 14px 14px 14px",
+          background: "#ffffff", border: "1px solid rgba(178,10,44,0.1)",
+          display: "flex", gap: 5, alignItems: "center",
+          boxShadow: "0 2px 10px rgba(178,10,44,0.07)"
+        }}>
+          {[0, 1, 2].map(i => (
+            <motion.div key={i}
+              animate={{ y: [0, -5, 0] }}
+              transition={{ repeat: Infinity, duration: 0.9, delay: i * 0.16 }}
+              style={{ width: 7, height: 7, borderRadius: "50%", background: "#b20a2c" }}
+            />
+          ))}
+        </div>
       </div>
     </motion.div>
   )
 }
 
+/* ─────────────────────────────────────────────
+   Loading screen
+───────────────────────────────────────────── */
 function LoadingScreen() {
   return (
     <div style={{
       display: "flex", height: "100vh",
       alignItems: "center", justifyContent: "center",
-      background: "#060b18"
+      background: "#fffbd5", flexDirection: "column", gap: 16
     }}>
       <motion.div
         animate={{ rotate: 360 }}
         transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
         style={{
           width: 40, height: 40, borderRadius: "50%",
-          border: "3px solid transparent",
-          borderTopColor: "#fc466b",
-          borderRightColor: "#3f5efb"
+          border: "3px solid rgba(178,10,44,0.15)",
+          borderTopColor: "#b20a2c"
         }}
       />
+      <div style={{
+        color: "rgba(178,10,44,0.5)", fontSize: 12,
+        fontFamily: "monospace", letterSpacing: "0.15em",
+        textTransform: "uppercase"
+      }}>Loading…</div>
     </div>
   )
 }
 
+/* ─────────────────────────────────────────────
+   Main App
+───────────────────────────────────────────── */
+let sessionCounter = Date.now()
+
 export default function App() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
-  const [messages, setMessages] = useState([
-    { id: "welcome", sender: "bot", text: "Hi! I'm PyBot, your coding assistant. How can I help you today?" }
-  ])
+
+  // Multi-session state
+  const [sessions, setSessions] = useState([])
+  const [activeId, setActiveId] = useState(null)
+  const [messages, setMessages] = useState([])
+
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
-  const chatHistory = useRef([])
+  const chatHistories = useRef({})
+  const firestoreUnsub = useRef(null)
 
-  // Auth state listener
+  /* ── Auth listener ── */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u)
       setAuthLoading(false)
+      if (!u) {
+        setSessions([])
+        setActiveId(null)
+        setMessages([])
+      }
     })
     return unsub
   }, [])
 
-  // Load messages from Firestore when user logs in
+  /* ── Load sessions list from Firestore ── */
   useEffect(() => {
     if (!user) return
-    const q = query(
-      collection(db, "users", user.uid, "messages"),
-      orderBy("createdAt", "asc")
-    )
+    const sessionsRef = collection(db, "users", user.uid, "sessions")
+    const q = query(sessionsRef, orderBy("updatedAt", "desc"))
     const unsub = onSnapshot(q, (snap) => {
-      const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-      if (msgs.length > 0) {
-        setMessages(msgs)
-        chatHistory.current = msgs.map(m => ({
-          role: m.sender === "bot" ? "assistant" : "user",
-          content: m.text
-        }))
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      setSessions(list)
+      // Auto-select first session if none active
+      if (list.length > 0 && !activeId) {
+        setActiveId(list[0].id)
+      }
+      // If no sessions, create a default one
+      if (list.length === 0) {
+        createNewChat(user)
       }
     })
     return unsub
   }, [user])
 
-  // Auto scroll
+  /* ── Load messages for active session ── */
+  useEffect(() => {
+    if (!user || !activeId) return
+    if (firestoreUnsub.current) firestoreUnsub.current()
+
+    const msgsRef = collection(db, "users", user.uid, "sessions", activeId, "messages")
+    const q = query(msgsRef, orderBy("createdAt", "asc"))
+
+    firestoreUnsub.current = onSnapshot(q, (snap) => {
+      const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      if (msgs.length === 0) {
+        const welcome = {
+          id: "welcome",
+          sender: "bot",
+          text: "Hi! I'm PyBot, your coding assistant. How can I help you today?"
+        }
+        setMessages([welcome])
+        chatHistories.current[activeId] = []
+      } else {
+        setMessages(msgs)
+        chatHistories.current[activeId] = msgs.map(m => ({
+          role: m.sender === "bot" ? "assistant" : "user",
+          content: m.text
+        }))
+      }
+    })
+    return () => { if (firestoreUnsub.current) firestoreUnsub.current() }
+  }, [user, activeId])
+
+  /* ── Auto scroll ── */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isLoading])
 
-  const saveMessage = async (sender, text) => {
-    if (!user) return
-    await addDoc(collection(db, "users", user.uid, "messages"), {
-      sender,
-      text,
-      createdAt: serverTimestamp()
+  /* ── Create new chat session ── */
+  const createNewChat = async (u = user) => {
+    if (!u) return
+    sessionCounter++
+    const sessRef = doc(collection(db, "users", u.uid, "sessions"))
+    await setDoc(sessRef, {
+      title: "New Chat",
+      updatedAt: serverTimestamp()
     })
+    setActiveId(sessRef.id)
+    setInput("")
   }
 
+  /* ── Delete session ── */
+  const deleteSession = async (id, e) => {
+    e.stopPropagation()
+    if (!user) return
+    // Delete all messages in the session
+    const msgsRef = collection(db, "users", user.uid, "sessions", id, "messages")
+    const snap = await getDocs(msgsRef)
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))
+    // Delete the session doc
+    await deleteDoc(doc(db, "users", user.uid, "sessions", id))
+    delete chatHistories.current[id]
+    if (activeId === id) {
+      const remaining = sessions.filter(s => s.id !== id)
+      if (remaining.length > 0) setActiveId(remaining[0].id)
+      else createNewChat()
+    }
+  }
+
+  /* ── Save message to Firestore ── */
+  const saveMessage = async (sessionId, sender, text) => {
+    if (!user) return
+    const msgsRef = collection(db, "users", user.uid, "sessions", sessionId, "messages")
+    await addDoc(msgsRef, { sender, text, createdAt: serverTimestamp() })
+    // Update session title from first user message
+    const session = sessions.find(s => s.id === sessionId)
+    if (sender === "user" && session?.title === "New Chat") {
+      await setDoc(
+        doc(db, "users", user.uid, "sessions", sessionId),
+        { title: text.slice(0, 38) + (text.length > 38 ? "…" : ""), updatedAt: serverTimestamp() },
+        { merge: true }
+      )
+    } else {
+      await setDoc(
+        doc(db, "users", user.uid, "sessions", sessionId),
+        { updatedAt: serverTimestamp() },
+        { merge: true }
+      )
+    }
+  }
+
+  /* ── Send message ── */
   const sendMessage = async () => {
     const text = input.trim()
-    if (!text || isLoading) return
+    if (!text || isLoading || !activeId) return
+    const sessionId = activeId
 
     const userMsg = { id: Date.now(), sender: "user", text }
     setMessages(prev => [...prev, userMsg])
-    await saveMessage("user", text)
+    await saveMessage(sessionId, "user", text)
     setInput("")
     setIsLoading(true)
-    chatHistory.current.push({ role: "user", content: text })
+
+    if (!chatHistories.current[sessionId]) chatHistories.current[sessionId] = []
+    chatHistories.current[sessionId].push({ role: "user", content: text })
 
     try {
       const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -259,19 +430,18 @@ export default function App() {
           max_tokens: 1024,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
-            ...chatHistory.current
+            ...chatHistories.current[sessionId]
           ]
         })
       })
       const data = await response.json()
       const reply = data.choices[0].message.content
-      chatHistory.current.push({ role: "assistant", content: reply })
-      const botMsg = { id: Date.now() + 1, sender: "bot", text: reply }
-      setMessages(prev => [...prev, botMsg])
-      await saveMessage("bot", reply)
+      chatHistories.current[sessionId].push({ role: "assistant", content: reply })
+      setMessages(prev => [...prev, { id: Date.now() + 1, sender: "bot", text: reply }])
+      await saveMessage(sessionId, "bot", reply)
     } catch {
-      const errMsg = { id: Date.now() + 1, sender: "bot", text: "⚠️ Could not reach Groq API. Check your API key." }
-      setMessages(prev => [...prev, errMsg])
+      const err = "⚠️ Could not reach Groq API. Check your API key."
+      setMessages(prev => [...prev, { id: Date.now() + 1, sender: "bot", text: err }])
     } finally {
       setIsLoading(false)
       inputRef.current?.focus()
@@ -279,213 +449,501 @@ export default function App() {
   }
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() }
   }
 
-  const clearChat = () => {
-    chatHistory.current = []
-    setMessages([{
-      id: "welcome",
-      sender: "bot",
-      text: "Hi! I'm PyBot, your coding assistant. How can I help you today?"
-    }])
-  }
-
+  /* ── Sign out ── */
   const handleSignOut = async () => {
+    if (firestoreUnsub.current) firestoreUnsub.current()
     await signOut(auth)
-    chatHistory.current = []
-    setMessages([{
-      id: "welcome",
-      sender: "bot",
-      text: "Hi! I'm PyBot, your coding assistant. How can I help you today?"
-    }])
+    chatHistories.current = {}
+    setSessions([]); setActiveId(null); setMessages([])
   }
 
+  const filtered = sessions.filter(s =>
+    (s.title || "").toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const activeSession = sessions.find(s => s.id === activeId)
+
+  /* ── Guards ── */
   if (authLoading) return <LoadingScreen />
   if (!user) return <Login />
 
+  /* ─────────────────────────────────────────────
+     RENDER
+  ───────────────────────────────────────────── */
   return (
     <div style={{
-      display: "flex", flexDirection: "column",
-      height: "100vh", background: "#060b18",
-      fontFamily: "'Inter', 'Segoe UI', sans-serif"
+      display: "flex", height: "100vh", overflow: "hidden",
+      background: "#fffbd5", fontFamily: "Georgia,'Times New Roman',serif"
     }}>
 
-      {/* Background blobs */}
-      <div style={{ position: "fixed", top: "-20%", left: "-10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(252,70,107,0.08) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
-      <div style={{ position: "fixed", bottom: "-20%", right: "-10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle, rgba(63,94,251,0.08) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
-
-      {/* Header */}
-      <motion.div
-        initial={{ y: -60, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ type: "spring", stiffness: 200, damping: 20 }}
-        style={{
-          padding: "16px 24px",
-          background: "rgba(15,23,42,0.8)",
-          backdropFilter: "blur(12px)",
-          borderBottom: "1px solid rgba(252,70,107,0.15)",
-          display: "flex", alignItems: "center",
-          justifyContent: "space-between",
-          zIndex: 10, position: "relative"
-        }}
-      >
-        {/* Left: logo + name */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <motion.div
-            whileHover={{ scale: 1.1, rotate: 5 }}
+      {/* ══════════════════════════════
+          SIDEBAR
+      ══════════════════════════════ */}
+      <AnimatePresence initial={false}>
+        {sidebarOpen && (
+          <motion.aside
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 272, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 280, damping: 30 }}
             style={{
-              width: 36, height: 36, borderRadius: "50%",
-              background: "linear-gradient(135deg, #fc466b, #3f5efb)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 16, fontWeight: 700, color: "#fff",
-              boxShadow: "0 4px 20px rgba(252,70,107,0.4)"
-            }}
-          >B</motion.div>
-          <div>
-            <div style={{ color: "#f1f5f9", fontWeight: 600, fontSize: 15 }}>PyBot</div>
-            <div style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
-              <motion.span
-                animate={{ scale: [1, 1.3, 1] }}
-                transition={{ repeat: Infinity, duration: 2 }}
-                style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }}
-              />
-              <span style={{ color: "#22c55e" }}>Online</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right: user info + buttons */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {user.photoURL && (
-            <img
-              src={user.photoURL}
-              alt="avatar"
-              style={{ width: 30, height: 30, borderRadius: "50%", border: "2px solid #fc466b" }}
-            />
-          )}
-          <span style={{ color: "#94a3b8", fontSize: 12 }}>
-            {user.displayName || user.email}
-          </span>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={clearChat}
-            style={{
-              background: "transparent",
-              border: "1px solid #334155",
-              borderRadius: 8, color: "#94a3b8",
-              padding: "6px 12px", fontSize: 12, cursor: "pointer"
-            }}
-          >Clear</motion.button>
-          <motion.button
-            whileHover={{ scale: 1.05, borderColor: "#fc466b" }}
-            whileTap={{ scale: 0.95 }}
-            onClick={handleSignOut}
-            style={{
-              background: "transparent",
-              border: "1px solid #fc466b",
-              borderRadius: 8, color: "#fc466b",
-              padding: "6px 12px", fontSize: 12, cursor: "pointer"
-            }}
-          >Sign out</motion.button>
-        </div>
-      </motion.div>
-
-      {/* Messages */}
-      <div style={{
-        flex: 1, overflowY: "auto",
-        padding: "24px 24px 8px",
-        display: "flex", flexDirection: "column",
-        position: "relative", zIndex: 1
-      }}>
-        <AnimatePresence>
-          {messages.map(msg => <Message key={msg.id} msg={msg} />)}
-          {isLoading && <TypingIndicator key="typing" />}
-        </AnimatePresence>
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input */}
-      <motion.div
-        initial={{ y: 60, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ type: "spring", stiffness: 200, damping: 20 }}
-        style={{
-          padding: "16px 24px",
-          background: "rgba(15,23,42,0.8)",
-          backdropFilter: "blur(12px)",
-          borderTop: "1px solid rgba(63,94,251,0.15)",
-          position: "relative", zIndex: 10
-        }}
-      >
-        <motion.div
-          whileFocusWithin={{ boxShadow: "0 0 0 2px rgba(252,70,107,0.3), 0 0 20px rgba(63,94,251,0.2)" }}
-          style={{
-            display: "flex", gap: 10, alignItems: "flex-end",
-            background: "#0f172a", border: "1px solid #334155",
-            borderRadius: 14, padding: "10px 14px"
-          }}
-        >
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
-            rows={1}
-            style={{
-              flex: 1, background: "transparent", border: "none",
-              outline: "none", color: "#f1f5f9", fontSize: 14,
-              resize: "none", lineHeight: 1.5, maxHeight: 120,
-              overflowY: "auto", fontFamily: "inherit"
-            }}
-            onInput={e => {
-              e.target.style.height = "auto"
-              e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"
-            }}
-          />
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9, rotateZ: 15 }}
-            onClick={sendMessage}
-            disabled={!input.trim() || isLoading}
-            style={{
-              width: 36, height: 36, borderRadius: "50%",
-              background: input.trim() && !isLoading
-                ? "linear-gradient(135deg, #fc466b, #3f5efb)"
-                : "#334155",
-              border: "none",
-              cursor: input.trim() && !isLoading ? "pointer" : "not-allowed",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0,
-              boxShadow: input.trim() && !isLoading
-                ? "0 4px 15px rgba(252,70,107,0.4)"
-                : "none"
+              height: "100vh", flexShrink: 0, overflow: "hidden",
+              background: "#160406",
+              display: "flex", flexDirection: "column",
+              borderRight: "1px solid rgba(178,10,44,0.2)"
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path d="M22 2L11 13" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </motion.button>
-        </motion.div>
-        <div style={{ textAlign: "center", color: "#475569", fontSize: 11, marginTop: 8 }}>
-          Enter to send · Shift+Enter for new line
+            <div style={{ width: 272, display: "flex", flexDirection: "column", height: "100%" }}>
+
+              {/* Sidebar top */}
+              <div style={{
+                padding: "15px 13px 11px",
+                borderBottom: "1px solid rgba(255,251,213,0.06)"
+              }}>
+                {/* Brand row */}
+                <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: 10,
+                    background: "linear-gradient(135deg,#b20a2c,#e8193c)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 16, fontWeight: 800, color: "#fffbd5",
+                    fontFamily: "Georgia,serif",
+                    boxShadow: "0 3px 12px rgba(178,10,44,0.45)"
+                  }}>P</div>
+                  <span style={{
+                    color: "#fffbd5", fontWeight: 700, fontSize: 15.5,
+                    fontFamily: "Georgia,serif", letterSpacing: "0.04em", flex: 1
+                  }}>PyBot</span>
+                  <motion.button
+                    whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                    onClick={() => setSidebarOpen(false)}
+                    style={{
+                      background: "transparent", border: "none", cursor: "pointer",
+                      color: "rgba(255,251,213,0.3)", padding: 4, display: "flex",
+                      alignItems: "center", borderRadius: 6
+                    }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                  </motion.button>
+                </div>
+
+                {/* New Chat */}
+                <motion.button
+                  whileHover={{ background: "rgba(178,10,44,0.82)" }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => createNewChat()}
+                  style={{
+                    width: "100%", padding: "8px 13px",
+                    background: "#b20a2c", border: "none", borderRadius: 8,
+                    color: "#fffbd5", fontSize: 13, fontWeight: 700,
+                    cursor: "pointer", display: "flex", alignItems: "center", gap: 7,
+                    fontFamily: "Georgia,serif",
+                    boxShadow: "0 3px 14px rgba(178,10,44,0.35)",
+                    transition: "background 0.18s"
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                  New Chat
+                </motion.button>
+              </div>
+
+              {/* Search */}
+              <div style={{ padding: "9px 13px 6px" }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 7,
+                  background: "rgba(255,251,213,0.05)",
+                  border: "1px solid rgba(255,251,213,0.09)",
+                  borderRadius: 8, padding: "6px 10px"
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,251,213,0.35)" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                  <input
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search chats..."
+                    style={{
+                      background: "transparent", border: "none", outline: "none",
+                      color: "rgba(255,251,213,0.75)", fontSize: 12.5,
+                      width: "100%", fontFamily: "Georgia,serif"
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Chat list */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "4px 7px 14px" }}>
+                {filtered.length === 0 ? (
+                  <div style={{
+                    textAlign: "center", color: "rgba(255,251,213,0.22)",
+                    fontSize: 12.5, fontStyle: "italic", marginTop: 22,
+                    fontFamily: "Georgia,serif"
+                  }}>No chats.</div>
+                ) : (
+                  filtered.map(s => (
+                    <motion.div
+                      key={s.id}
+                      whileHover={{ background: "rgba(255,251,213,0.07)" }}
+                      onClick={() => setActiveId(s.id)}
+                      style={{
+                        padding: "8px 9px",
+                        borderRadius: 8, cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 7,
+                        background: s.id === activeId
+                          ? "rgba(178,10,44,0.22)"
+                          : "transparent",
+                        border: s.id === activeId
+                          ? "1px solid rgba(178,10,44,0.28)"
+                          : "1px solid transparent",
+                        marginBottom: 1, transition: "background 0.14s"
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        stroke={s.id === activeId ? "#e8a0ac" : "rgba(255,251,213,0.3)"}
+                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                      </svg>
+                      <span style={{
+                        flex: 1, color: s.id === activeId ? "#fffbd5" : "rgba(255,251,213,0.55)",
+                        fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden",
+                        textOverflow: "ellipsis", fontFamily: "Georgia,serif"
+                      }}>{s.title || "New Chat"}</span>
+                      <motion.span
+                        whileHover={{ color: "#e8193c", opacity: 1 }}
+                        onClick={e => deleteSession(s.id, e)}
+                        style={{
+                          color: "rgba(255,251,213,0.18)", fontSize: 15,
+                          lineHeight: 1, cursor: "pointer", flexShrink: 0,
+                          opacity: 0.7, padding: "0 2px"
+                        }}
+                      >×</motion.span>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+
+              {/* User footer */}
+              <div style={{
+                padding: "11px 13px",
+                borderTop: "1px solid rgba(255,251,213,0.06)",
+                display: "flex", alignItems: "center", gap: 9
+              }}>
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="avatar"
+                    style={{ width: 28, height: 28, borderRadius: "50%", border: "1.5px solid rgba(178,10,44,0.5)" }} />
+                ) : (
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%",
+                    background: "#fffbd5", color: "#b20a2c",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 800, fontFamily: "Georgia,serif",
+                    border: "1.5px solid rgba(178,10,44,0.4)"
+                  }}>
+                    {(user.displayName || user.email || "U")[0].toUpperCase()}
+                  </div>
+                )}
+                <div style={{ flex: 1, overflow: "hidden" }}>
+                  <div style={{
+                    color: "rgba(255,251,213,0.7)", fontSize: 11.5,
+                    whiteSpace: "nowrap", overflow: "hidden",
+                    textOverflow: "ellipsis", fontFamily: "Georgia,serif"
+                  }}>{user.displayName || user.email}</div>
+                </div>
+                <motion.button
+                  whileHover={{ scale: 1.1, color: "#e8193c" }}
+                  whileTap={{ scale: 0.9 }}
+                  onClick={handleSignOut}
+                  title="Sign out"
+                  style={{
+                    background: "transparent", border: "none", cursor: "pointer",
+                    color: "rgba(255,251,213,0.3)", padding: 4, display: "flex",
+                    flexShrink: 0, transition: "color 0.18s"
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                  </svg>
+                </motion.button>
+              </div>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      {/* ══════════════════════════════
+          MAIN PANEL
+      ══════════════════════════════ */}
+      <div style={{
+        flex: 1, display: "flex", flexDirection: "column",
+        overflow: "hidden", position: "relative"
+      }}>
+        {/* Background texture */}
+        <div style={{
+          position: "absolute", inset: 0, pointerEvents: "none",
+          backgroundImage: "radial-gradient(circle, rgba(178,10,44,0.065) 1px, transparent 1px)",
+          backgroundSize: "26px 26px", zIndex: 0
+        }} />
+        <div style={{
+          position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0,
+          background: "radial-gradient(ellipse 65% 60% at 50% 45%, rgba(255,252,195,0.4) 0%, transparent 70%)"
+        }} />
+
+        {/* ── Top bar ── */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "10px 18px",
+          background: "rgba(255,251,213,0.92)",
+          backdropFilter: "blur(10px)",
+          borderBottom: "1.5px solid rgba(178,10,44,0.1)",
+          zIndex: 10, position: "relative",
+          boxShadow: "0 1px 10px rgba(178,10,44,0.05)"
+        }}>
+          {/* Hamburger (when sidebar closed) */}
+          {!sidebarOpen && (
+            <motion.button
+              whileHover={{ scale: 1.08, background: "rgba(178,10,44,0.08)" }}
+              whileTap={{ scale: 0.93 }}
+              onClick={() => setSidebarOpen(true)}
+              style={{
+                background: "transparent",
+                border: "1px solid rgba(178,10,44,0.2)",
+                borderRadius: 7, cursor: "pointer",
+                color: "#b20a2c", padding: "5px 7px",
+                display: "flex", alignItems: "center"
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            </motion.button>
+          )}
+
+          <span style={{
+            color: "#b20a2c", fontWeight: 700, fontSize: 13.5,
+            fontFamily: "Georgia,serif", letterSpacing: "0.03em",
+            flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"
+          }}>
+            {activeSession?.title || "PyBot"}
+          </span>
+
+          {/* User avatar in topbar */}
+          {user.photoURL ? (
+            <img src={user.photoURL} alt="avatar"
+              style={{ width: 26, height: 26, borderRadius: "50%", border: "1.5px solid rgba(178,10,44,0.4)" }} />
+          ) : (
+            <div style={{
+              width: 26, height: 26, borderRadius: "50%",
+              background: "#fffbd5", color: "#b20a2c",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 10, fontWeight: 800, fontFamily: "Georgia,serif",
+              border: "1.5px solid #b20a2c"
+            }}>
+              {(user.displayName || user.email || "U")[0].toUpperCase()}
+            </div>
+          )}
+
+          <motion.button
+            whileHover={{ scale: 1.04, background: "rgba(178,10,44,0.07)" }}
+            whileTap={{ scale: 0.94 }}
+            onClick={() => createNewChat()}
+            style={{
+              background: "transparent",
+              border: "1.5px solid rgba(178,10,44,0.24)",
+              borderRadius: 7, color: "#b20a2c", padding: "5px 12px",
+              fontSize: 11, cursor: "pointer", fontFamily: "monospace",
+              letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 600,
+              transition: "background 0.18s"
+            }}
+          >+ New</motion.button>
         </div>
-      </motion.div>
+
+        {/* ── Messages ── */}
+        <div style={{
+          flex: 1, overflowY: "auto",
+          padding: messages.length <= 1 && !isLoading ? "0" : "24px 22px 14px",
+          position: "relative", zIndex: 2,
+          display: "flex", flexDirection: "column"
+        }}>
+          {messages.length <= 1 && !isLoading ? (
+            /* Empty state */
+            <div style={{
+              flex: 1, display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center", gap: 12
+            }}>
+              <motion.div
+                initial={{ scale: 0.7, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 200, damping: 22 }}
+                style={{
+                  width: 70, height: 70, borderRadius: 20,
+                  background: "linear-gradient(135deg,#b20a2c,#e8193c)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 30, fontWeight: 800, color: "#fffbd5",
+                  fontFamily: "Georgia,serif",
+                  boxShadow: "0 8px 34px rgba(178,10,44,0.3)",
+                  border: "3px solid rgba(255,251,213,0.6)"
+                }}
+              >P</motion.div>
+              <motion.div
+                initial={{ y: 10, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.14 }}
+                style={{ textAlign: "center" }}
+              >
+                <div style={{
+                  color: "#b20a2c", fontWeight: 700, fontSize: 24,
+                  fontFamily: "Georgia,serif", letterSpacing: "0.04em"
+                }}>PyBot</div>
+                <div style={{
+                  color: "rgba(178,10,44,0.42)", fontSize: 11.5, marginTop: 4,
+                  fontFamily: "monospace", letterSpacing: "0.18em", textTransform: "uppercase"
+                }}>Your Coding Assistant</div>
+              </motion.div>
+              {/* Chips */}
+              <motion.div
+                initial={{ y: 8, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.26 }}
+                style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 6, maxWidth: 420 }}
+              >
+                {["Write a Python function", "Explain recursion", "Fix my code", "Sort algorithm"].map(chip => (
+                  <motion.button
+                    key={chip}
+                    whileHover={{ scale: 1.04, background: "rgba(178,10,44,0.09)" }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => { setInput(chip); inputRef.current?.focus() }}
+                    style={{
+                      background: "#ffffff", border: "1.5px solid rgba(178,10,44,0.2)",
+                      borderRadius: 20, padding: "7px 15px", fontSize: 12.5,
+                      color: "#b20a2c", cursor: "pointer", fontFamily: "Georgia,serif",
+                      boxShadow: "0 2px 8px rgba(178,10,44,0.07)",
+                      transition: "background 0.18s"
+                    }}
+                  >{chip}</motion.button>
+                ))}
+              </motion.div>
+            </div>
+          ) : (
+            <div style={{ paddingTop: 6 }}>
+              <AnimatePresence>
+                {messages.map((msg, idx) => (
+                  <Message
+                    key={msg.id}
+                    msg={msg}
+                    isLatest={idx === messages.length - 1}
+                  />
+                ))}
+                {isLoading && <TypingIndicator key="typing" />}
+              </AnimatePresence>
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
+
+        {/* ── Input bar ── */}
+        <div style={{
+          padding: "12px 18px 16px",
+          background: "rgba(255,251,213,0.96)",
+          backdropFilter: "blur(10px)",
+          borderTop: "1.5px solid rgba(178,10,44,0.1)",
+          position: "relative", zIndex: 10,
+          boxShadow: "0 -2px 14px rgba(178,10,44,0.05)"
+        }}>
+          <motion.div
+            whileFocusWithin={{
+              boxShadow: "0 0 0 2.5px rgba(178,10,44,0.2), 0 4px 18px rgba(178,10,44,0.09)",
+              borderColor: "rgba(178,10,44,0.38)"
+            }}
+            style={{
+              display: "flex", alignItems: "center", gap: 9,
+              background: "#ffffff",
+              border: "1.5px solid rgba(178,10,44,0.15)",
+              borderRadius: 13, padding: "9px 10px 9px 14px",
+              boxShadow: "0 2px 12px rgba(178,10,44,0.06)",
+              transition: "box-shadow 0.25s, border-color 0.25s"
+            }}
+          >
+            {/* Attach / plus icon */}
+            <motion.button
+              whileHover={{ scale: 1.15, color: "#b20a2c" }}
+              whileTap={{ scale: 0.9 }}
+              style={{
+                background: "transparent", border: "none", cursor: "pointer",
+                color: "rgba(178,10,44,0.28)", padding: 0,
+                display: "flex", flexShrink: 0, transition: "color 0.2s"
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/>
+              </svg>
+            </motion.button>
+
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Send a message..."
+              rows={1}
+              style={{
+                flex: 1, background: "transparent", border: "none", outline: "none",
+                color: "#1a0508", fontSize: 14, resize: "none", lineHeight: 1.5,
+                maxHeight: 120, overflowY: "auto", fontFamily: "Georgia,serif"
+              }}
+              onInput={e => {
+                e.target.style.height = "auto"
+                e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"
+              }}
+            />
+
+            <motion.button
+              whileHover={input.trim() && !isLoading ? { scale: 1.1, rotate: 12 } : {}}
+              whileTap={input.trim() && !isLoading ? { scale: 0.88 } : {}}
+              onClick={sendMessage}
+              disabled={!input.trim() || isLoading}
+              style={{
+                width: 36, height: 36, borderRadius: 9, flexShrink: 0,
+                background: input.trim() && !isLoading
+                  ? "linear-gradient(135deg,#b20a2c,#e8193c)"
+                  : "rgba(178,10,44,0.08)",
+                border: "none",
+                cursor: input.trim() && !isLoading ? "pointer" : "not-allowed",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: input.trim() && !isLoading
+                  ? "0 3px 14px rgba(178,10,44,0.36)"
+                  : "none",
+                transition: "background 0.2s, box-shadow 0.2s"
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                <path d="M22 2L11 13"
+                  stroke={input.trim() && !isLoading ? "#fffbd5" : "rgba(178,10,44,0.28)"}
+                  strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M22 2L15 22L11 13L2 9L22 2Z"
+                  stroke={input.trim() && !isLoading ? "#fffbd5" : "rgba(178,10,44,0.28)"}
+                  strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </motion.button>
+          </motion.div>
+
+          <div style={{
+            textAlign: "center", color: "rgba(178,10,44,0.26)",
+            fontSize: 10, marginTop: 7,
+            fontFamily: "monospace", letterSpacing: "0.1em", textTransform: "uppercase"
+          }}>Enter to send · Shift+Enter for new line</div>
+        </div>
+      </div>
 
       <style>{`
-        @keyframes bounce {
-          0%, 60%, 100% { transform: translateY(0); }
-          30% { transform: translateY(-6px); }
-        }
-        ::-webkit-scrollbar { width: 4px; }
+        * { box-sizing: border-box; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+        ::placeholder { color: rgba(178,10,44,0.26) !important; font-style: italic; }
+        input::placeholder { color: rgba(255,251,213,0.28) !important; }
+        ::-webkit-scrollbar { width: 3px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(178,10,44,0.22); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #b20a2c; }
       `}</style>
     </div>
   )
