@@ -259,6 +259,43 @@ function LoadingScreen() {
 }
 
 /* ─────────────────────────────────────────────
+   LocalStorage helpers
+───────────────────────────────────────────── */
+const getLocalSessions = (uid) => {
+  try {
+    const data = localStorage.getItem(`pybot_sessions_${uid}`)
+    return data ? JSON.parse(data) : []
+  } catch {
+    return []
+  }
+}
+
+const saveLocalSessions = (uid, list) => {
+  try {
+    localStorage.setItem(`pybot_sessions_${uid}`, JSON.stringify(list))
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const getLocalMessages = (uid, sessionId) => {
+  try {
+    const data = localStorage.getItem(`pybot_messages_${uid}_${sessionId}`)
+    return data ? JSON.parse(data) : []
+  } catch {
+    return []
+  }
+}
+
+const saveLocalMessages = (uid, sessionId, list) => {
+  try {
+    localStorage.setItem(`pybot_messages_${uid}_${sessionId}`, JSON.stringify(list))
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+/* ─────────────────────────────────────────────
    Main App
 ───────────────────────────────────────────── */
 let sessionCounter = Date.now()
@@ -271,6 +308,7 @@ export default function App() {
   const [sessions, setSessions] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [messages, setMessages] = useState([])
+  const [useLocalFallback, setUseLocalFallback] = useState(false)
 
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -296,13 +334,12 @@ export default function App() {
     return unsub
   }, [])
 
-  /* ── Load sessions list from Firestore ── */
+  /* ── Load sessions list from Firestore / LocalStorage ── */
   useEffect(() => {
     if (!user) return
-    const sessionsRef = collection(db, "users", user.uid, "sessions")
-    const q = query(sessionsRef, orderBy("updatedAt", "desc"))
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+
+    if (useLocalFallback) {
+      const list = getLocalSessions(user.uid)
       setSessions(list)
       // Auto-select first session if none active
       if (list.length > 0 && !activeId) {
@@ -312,20 +349,38 @@ export default function App() {
       if (list.length === 0) {
         createNewChat(user)
       }
-    })
+      return
+    }
+
+    const sessionsRef = collection(db, "users", user.uid, "sessions")
+    const q = query(sessionsRef, orderBy("updatedAt", "desc"))
+    const unsub = onSnapshot(q, 
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        setSessions(list)
+        // Auto-select first session if none active
+        if (list.length > 0 && !activeId) {
+          setActiveId(list[0].id)
+        }
+        // If no sessions, create a default one
+        if (list.length === 0) {
+          createNewChat(user)
+        }
+      },
+      (err) => {
+        console.error("Firestore onSnapshot error, falling back to local storage:", err)
+        setUseLocalFallback(true)
+      }
+    )
     return unsub
-  }, [user])
+  }, [user, useLocalFallback, activeId])
 
   /* ── Load messages for active session ── */
   useEffect(() => {
     if (!user || !activeId) return
-    if (firestoreUnsub.current) firestoreUnsub.current()
 
-    const msgsRef = collection(db, "users", user.uid, "sessions", activeId, "messages")
-    const q = query(msgsRef, orderBy("createdAt", "asc"))
-
-    firestoreUnsub.current = onSnapshot(q, (snap) => {
-      const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    if (useLocalFallback) {
+      const msgs = getLocalMessages(user.uid, activeId)
       if (msgs.length === 0) {
         const welcome = {
           id: "welcome",
@@ -341,9 +396,40 @@ export default function App() {
           content: m.text
         }))
       }
-    })
+      return
+    }
+
+    if (firestoreUnsub.current) firestoreUnsub.current()
+
+    const msgsRef = collection(db, "users", user.uid, "sessions", activeId, "messages")
+    const q = query(msgsRef, orderBy("createdAt", "asc"))
+
+    firestoreUnsub.current = onSnapshot(q, 
+      (snap) => {
+        const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        if (msgs.length === 0) {
+          const welcome = {
+            id: "welcome",
+            sender: "bot",
+            text: "Hi! I'm PyBot, your coding assistant. How can I help you today?"
+          }
+          setMessages([welcome])
+          chatHistories.current[activeId] = []
+        } else {
+          setMessages(msgs)
+          chatHistories.current[activeId] = msgs.map(m => ({
+            role: m.sender === "bot" ? "assistant" : "user",
+            content: m.text
+          }))
+        }
+      },
+      (err) => {
+        console.error("Firestore messages subscription error, falling back to local storage:", err)
+        setUseLocalFallback(true)
+      }
+    )
     return () => { if (firestoreUnsub.current) firestoreUnsub.current() }
-  }, [user, activeId])
+  }, [user, activeId, useLocalFallback])
 
   /* ── Auto scroll ── */
   useEffect(() => {
@@ -354,52 +440,144 @@ export default function App() {
   const createNewChat = async (u = user) => {
     if (!u) return
     sessionCounter++
-    const sessRef = doc(collection(db, "users", u.uid, "sessions"))
-    await setDoc(sessRef, {
-      title: "New Chat",
-      updatedAt: serverTimestamp()
-    })
-    setActiveId(sessRef.id)
-    setInput("")
+    const newId = "local_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9)
+
+    if (useLocalFallback) {
+      const list = getLocalSessions(u.uid)
+      const newList = [{ id: newId, title: "New Chat", updatedAt: Date.now() }, ...list]
+      saveLocalSessions(u.uid, newList)
+      setSessions(newList)
+      setActiveId(newId)
+      setInput("")
+      return
+    }
+
+    try {
+      const sessRef = doc(collection(db, "users", u.uid, "sessions"))
+      await setDoc(sessRef, {
+        title: "New Chat",
+        updatedAt: serverTimestamp()
+      })
+      setActiveId(sessRef.id)
+      setInput("")
+    } catch (err) {
+      console.error("Failed to create Firestore session, switching to local fallback:", err)
+      setUseLocalFallback(true)
+      // Retry locally
+      const list = getLocalSessions(u.uid)
+      const newList = [{ id: newId, title: "New Chat", updatedAt: Date.now() }, ...list]
+      saveLocalSessions(u.uid, newList)
+      setSessions(newList)
+      setActiveId(newId)
+      setInput("")
+    }
   }
 
   /* ── Delete session ── */
   const deleteSession = async (id, e) => {
     e.stopPropagation()
     if (!user) return
-    // Delete all messages in the session
-    const msgsRef = collection(db, "users", user.uid, "sessions", id, "messages")
-    const snap = await getDocs(msgsRef)
-    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))
-    // Delete the session doc
-    await deleteDoc(doc(db, "users", user.uid, "sessions", id))
-    delete chatHistories.current[id]
-    if (activeId === id) {
+
+    if (useLocalFallback) {
       const remaining = sessions.filter(s => s.id !== id)
-      if (remaining.length > 0) setActiveId(remaining[0].id)
-      else createNewChat()
+      saveLocalSessions(user.uid, remaining)
+      setSessions(remaining)
+      localStorage.removeItem(`pybot_messages_${user.uid}_${id}`)
+      delete chatHistories.current[id]
+      if (activeId === id) {
+        if (remaining.length > 0) setActiveId(remaining[0].id)
+        else createNewChat()
+      }
+      return
+    }
+
+    try {
+      // Delete all messages in the session
+      const msgsRef = collection(db, "users", user.uid, "sessions", id, "messages")
+      const snap = await getDocs(msgsRef)
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))
+      // Delete the session doc
+      await deleteDoc(doc(db, "users", user.uid, "sessions", id))
+      delete chatHistories.current[id]
+      if (activeId === id) {
+        const remaining = sessions.filter(s => s.id !== id)
+        if (remaining.length > 0) setActiveId(remaining[0].id)
+        else createNewChat()
+      }
+    } catch (err) {
+      console.error("Delete session Firestore operation failed, switching to local fallback:", err)
+      setUseLocalFallback(true)
+      // Retry delete locally
+      const remaining = sessions.filter(s => s.id !== id)
+      saveLocalSessions(user.uid, remaining)
+      setSessions(remaining)
+      localStorage.removeItem(`pybot_messages_${user.uid}_${id}`)
+      delete chatHistories.current[id]
+      if (activeId === id) {
+        if (remaining.length > 0) setActiveId(remaining[0].id)
+        else createNewChat()
+      }
     }
   }
 
-  /* ── Save message to Firestore ── */
+  /* ── Save message ── */
   const saveMessage = async (sessionId, sender, text) => {
     if (!user) return
-    const msgsRef = collection(db, "users", user.uid, "sessions", sessionId, "messages")
-    await addDoc(msgsRef, { sender, text, createdAt: serverTimestamp() })
-    // Update session title from first user message
-    const session = sessions.find(s => s.id === sessionId)
-    if (sender === "user" && session?.title === "New Chat") {
-      await setDoc(
-        doc(db, "users", user.uid, "sessions", sessionId),
-        { title: text.slice(0, 38) + (text.length > 38 ? "…" : ""), updatedAt: serverTimestamp() },
-        { merge: true }
-      )
-    } else {
-      await setDoc(
-        doc(db, "users", user.uid, "sessions", sessionId),
-        { updatedAt: serverTimestamp() },
-        { merge: true }
-      )
+
+    if (useLocalFallback) {
+      const msgs = getLocalMessages(user.uid, sessionId)
+      const newMsg = {
+        id: Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+        sender,
+        text,
+        createdAt: Date.now()
+      }
+      const updatedMsgs = [...msgs, newMsg]
+      saveLocalMessages(user.uid, sessionId, updatedMsgs)
+      setMessages(updatedMsgs)
+
+      // Update session title
+      const list = getLocalSessions(user.uid)
+      const updatedList = list.map(s => {
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            title: sender === "user" && s.title === "New Chat"
+              ? text.slice(0, 38) + (text.length > 38 ? "…" : "")
+              : s.title,
+            updatedAt: Date.now()
+          }
+        }
+        return s
+      })
+      saveLocalSessions(user.uid, updatedList)
+      setSessions(updatedList)
+      return
+    }
+
+    try {
+      const msgsRef = collection(db, "users", user.uid, "sessions", sessionId, "messages")
+      await addDoc(msgsRef, { sender, text, createdAt: serverTimestamp() })
+      // Update session title from first user message
+      const session = sessions.find(s => s.id === sessionId)
+      if (sender === "user" && session?.title === "New Chat") {
+        await setDoc(
+          doc(db, "users", user.uid, "sessions", sessionId),
+          { title: text.slice(0, 38) + (text.length > 38 ? "…" : ""), updatedAt: serverTimestamp() },
+          { merge: true }
+        )
+      } else {
+        await setDoc(
+          doc(db, "users", user.uid, "sessions", sessionId),
+          { updatedAt: serverTimestamp() },
+          { merge: true }
+        )
+      }
+    } catch (err) {
+      console.error("Save message Firestore operation failed, falling back to local storage:", err)
+      setUseLocalFallback(true)
+      // Retry save locally
+      await saveMessage(sessionId, sender, text)
     }
   }
 
@@ -439,9 +617,10 @@ export default function App() {
       chatHistories.current[sessionId].push({ role: "assistant", content: reply })
       setMessages(prev => [...prev, { id: Date.now() + 1, sender: "bot", text: reply }])
       await saveMessage(sessionId, "bot", reply)
-    } catch {
-      const err = "⚠️ Could not reach Groq API. Check your API key."
-      setMessages(prev => [...prev, { id: Date.now() + 1, sender: "bot", text: err }])
+    } catch (apiErr) {
+      console.error("Groq API error:", apiErr)
+      const errMsg = "⚠️ Could not reach Groq API. Check your API key."
+      setMessages(prev => [...prev, { id: Date.now() + 1, sender: "bot", text: errMsg }])
     } finally {
       setIsLoading(false)
       inputRef.current?.focus()
@@ -726,6 +905,26 @@ export default function App() {
           }}>
             {activeSession?.title || "PyBot"}
           </span>
+
+          {/* Storage status pill */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: useLocalFallback ? "rgba(178,10,44,0.06)" : "rgba(76,175,80,0.08)",
+            border: useLocalFallback ? "1px solid rgba(178,10,44,0.18)" : "1px solid rgba(76,175,80,0.22)",
+            borderRadius: 20, padding: "3px 9px", marginRight: 8
+          }}>
+            <span style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: useLocalFallback ? "#b20a2c" : "#4caf50"
+            }} />
+            <span style={{
+              fontSize: 10, fontWeight: 700,
+              color: useLocalFallback ? "#b20a2c" : "#2e7d32",
+              fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.05em"
+            }}>
+              {useLocalFallback ? "Local Storage" : "Cloud Sync"}
+            </span>
+          </div>
 
           {/* User avatar in topbar */}
           {user.photoURL ? (
